@@ -1,13 +1,96 @@
 #include <curl/curl.h>
+#include <curl/easy.h>
+#include <stdio.h>
+#include <string.h>
 
-static void curl_set_handle_opts(CURL *curl, struct dload_payload *payload)
-{
-	const char *useragent = getenv("HTTP_USER_AGENT");
-	struct stat st;
+#include "util.h"
+#include "dload.h"
 
+static int dload_progress_cb(void *file, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, curl_off_t ulnow) {
+
+	dload_payload *payload = (dload_payload *)file;
+
+	if (dltotal <= 0) {
+		return 0;
+	}
+
+	double bar_percent = (dlnow * 1.0/dltotal) * 100;
+
+	const unsigned short cols = getcols();
+	int infolen = cols * 6 / 10;
+	if (infolen < 50) {
+		infolen = 50;
+	}
+	int proglen = cols - infolen;
+
+	const int hashlen = proglen > 8 ? proglen - 8 : 0;
+	const int hash = bar_percent * hashlen / 100;
+	static int lasthash = 0, mouth = 0;
+	int i;
+
+	if(bar_percent == 0) {
+		lasthash = 0;
+		mouth = 0;
+	}
+
+	if(hashlen > 0) {
+		fprintf(stdout, "%20s %4s %5s", payload->content_disp_name, calculateSize(dlnow), calculateSize(dltotal));
+		fputs(" [", stdout);
+		for(i = hashlen; i > 0; --i) {
+			/* if special progress bar enabled */
+			if(i > hashlen - hash) {
+				putchar('-');
+			} else if(i == hashlen - hash) {
+				if(lasthash == hash) {
+					if(mouth) {
+						fputs("\033[1;33mC\033[m", stdout);
+					} else {
+						fputs("\033[1;33mc\033[m", stdout);
+					}
+				} else {
+					lasthash = hash;
+					mouth = mouth == 1 ? 0 : 1;
+					if(mouth) {
+						fputs("\033[1;33mC\033[m", stdout);
+					} else {
+						fputs("\033[1;33mc\033[m", stdout);
+					}
+				}
+			} else if(i % 3 == 0) {
+				fputs("\033[0;37mo\033[m", stdout);
+			} else {
+				fputs("\033[0;37m \033[m", stdout);
+			}
+			
+		}
+		putchar(']');
+	}
+	/* print display percent after progress bar */
+	/* 5 = 1 space + 3 digits + 1 % */
+	if(proglen >= 5) {
+		printf(" %3d%%", (int)bar_percent);
+	}
+
+	putchar('\r');
+	fflush(stdout);
+
+
+	return 0;
+}
+	
+
+static void curl_set_handle_opts(CURL *curl, dload_payload *payload) {
 	curl_easy_reset(curl);
 	curl_easy_setopt(curl, CURLOPT_USERAGENT, "Man page crawler (info@parabolas.xyz; https://man.parabolas.xyz/)");
 	curl_easy_setopt(curl, CURLOPT_URL, payload->fileurl);
+
+	if (payload->write_string == 0) {
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, payload->dest_string);
+		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writefunc);
+	} else {
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, payload->localf);
+	}
+
 	curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, payload->error_buffer);
 	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
 	curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 10L);
@@ -16,12 +99,6 @@ static void curl_set_handle_opts(CURL *curl, struct dload_payload *payload)
 	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 	curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, dload_progress_cb);
 	curl_easy_setopt(curl, CURLOPT_XFERINFODATA, (void *)payload);
-	if(!handle->disable_dl_timeout) {
-		curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
-		curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 10L);
-	}
-	curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, dload_parseheader_cb);
-	curl_easy_setopt(curl, CURLOPT_HEADERDATA, (void *)payload);
 	curl_easy_setopt(curl, CURLOPT_NETRC, CURL_NETRC_OPTIONAL);
 	curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
 	curl_easy_setopt(curl, CURLOPT_TCP_KEEPIDLE, 60L);
@@ -29,140 +106,51 @@ static void curl_set_handle_opts(CURL *curl, struct dload_payload *payload)
 	curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_ANY);
 	curl_easy_setopt(curl, CURLOPT_PRIVATE, (void *)payload);
 
-	_alpm_log(handle, ALPM_LOG_DEBUG, "%s: url is %s\n",
-		payload->remote_name, payload->fileurl);
-
-	if(payload->max_size) {
-		_alpm_log(handle, ALPM_LOG_DEBUG, "%s: maxsize %jd\n",
-				payload->remote_name, (intmax_t)payload->max_size);
-		curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE,
-				(curl_off_t)payload->max_size);
-	}
-
-	if(useragent != NULL) {
-	}
-
-	if(!payload->force && payload->destfile_name &&
-			stat(payload->destfile_name, &st) == 0) {
-		/* start from scratch, but only download if our local is out of date. */
-		curl_easy_setopt(curl, CURLOPT_TIMECONDITION, CURL_TIMECOND_IFMODSINCE);
-		curl_easy_setopt(curl, CURLOPT_TIMEVALUE, (long)st.st_mtime);
-		_alpm_log(handle, ALPM_LOG_DEBUG,
-				"%s: using time condition %ld\n",
-				payload->remote_name, (long)st.st_mtime);
-	} else if(stat(payload->tempfile_name, &st) == 0 && payload->allow_resume) {
-		/* a previous partial download exists, resume from end of file. */
-		payload->tempfile_openmode = "ab";
-		curl_easy_setopt(curl, CURLOPT_RESUME_FROM_LARGE, (curl_off_t)st.st_size);
-		_alpm_log(handle, ALPM_LOG_DEBUG,
-				"%s: tempfile found, attempting continuation from %jd bytes\n",
-				payload->remote_name, (intmax_t)st.st_size);
-		payload->initial_size = st.st_size;
-	}
 }
 
-int curl_download(struct dload_payload *payload) {
+int curl_download(dload_payload *payload) {
 	CURL *curl;
+	CURLcode res;
+	char errbuf[CURL_ERROR_SIZE];
+	errbuf[0] = 0;
 
 	curl = curl_easy_init();
 	payload->curl = curl;
+	strcpy(payload->error_buffer, errbuf);
 
 	curl_set_handle_opts(curl, payload);
 
-}
+	res = curl_easy_perform(curl);
 
-static int curl_add_payload(alpm_handle_t *handle, CURLM *curlm,
-		struct dload_payload *payload, const char *localpath)
+	if(res != CURLE_OK) {
+		size_t len = strlen(payload->error_buffer);
+		fprintf(stderr, "\nlibcurl: (%d) ", res);
+		if(len)
+			fprintf(stderr, "%s%s", payload->error_buffer,
+						((errbuf[len - 1] != '\n') ? "\n" : ""));
+		else
+			fprintf(stderr, "%s\n", curl_easy_strerror(res));
+	}
+
+	curl_easy_cleanup(curl);
+	putchar('\n');
+
+	return 0;
+
+}
+/*
+
+static int curl_add_payload(CURLM *curlm, dload_payload *payload, const char *localpath)
 {
 	size_t len;
 	CURL *curl = NULL;
-	char hostname[HOSTNAME_SIZE];
 	int ret = -1;
 
 	curl = curl_easy_init();
 	payload->curl = curl;
 
-	if(payload->fileurl) {
-		ASSERT(!payload->servers, GOTO_ERR(handle, ALPM_ERR_WRONG_ARGS, cleanup));
-		ASSERT(!payload->filepath, GOTO_ERR(handle, ALPM_ERR_WRONG_ARGS, cleanup));
-	} else {
-		const char *server;
-		while(payload->servers && should_skip_server(handle, payload->servers->data)) {
-			payload->servers = payload->servers->next;
-		}
-
-		ASSERT(payload->servers, GOTO_ERR(handle, ALPM_ERR_SERVER_NONE, cleanup));
-		ASSERT(payload->filepath, GOTO_ERR(handle, ALPM_ERR_WRONG_ARGS, cleanup));
-
-		server = payload->servers->data;
-		payload->servers = payload->servers->next;
-
-		len = strlen(server) + strlen(payload->filepath) + 2;
-		MALLOC(payload->fileurl, len, GOTO_ERR(handle, ALPM_ERR_MEMORY, cleanup));
-		snprintf(payload->fileurl, len, "%s/%s", server, payload->filepath);
-	}
-
-	payload->tempfile_openmode = "wb";
-	if(!payload->remote_name) {
-		STRDUP(payload->remote_name, get_filename(payload->fileurl),
-			GOTO_ERR(handle, ALPM_ERR_MEMORY, cleanup));
-	}
-	if(curl_gethost(payload->fileurl, hostname, sizeof(hostname)) != 0) {
-		_alpm_log(handle, ALPM_LOG_ERROR, _("url '%s' is invalid\n"), payload->fileurl);
-		GOTO_ERR(handle, ALPM_ERR_SERVER_BAD_URL, cleanup);
-	}
-
-	if(!payload->random_partfile && payload->remote_name && strlen(payload->remote_name) > 0) {
-		if(!payload->destfile_name) {
-			payload->destfile_name = get_fullpath(localpath, payload->remote_name, "");
-		}
-		payload->tempfile_name = get_fullpath(localpath, payload->remote_name, ".part");
-		if(!payload->destfile_name || !payload->tempfile_name) {
-			goto cleanup;
-		}
-	} else {
-		/* We want a random filename or the URL does not contain a filename, so download to a
-		 * temporary location. We can not support resuming this kind of download; any partial
-		 * transfers will be destroyed */
-		payload->unlink_on_fail = 1;
-
-		payload->localf = create_tempfile(payload, localpath);
-		if(payload->localf == NULL) {
-			goto cleanup;
-		}
-	}
-
-	curl_set_handle_opts(curl, payload);
-
-	if(payload->max_size == payload->initial_size && payload->max_size != 0) {
-		/* .part file is complete */
-		ret = 0;
-		goto cleanup;
-	}
-
-	if(payload->localf == NULL) {
-		payload->localf = fopen(payload->tempfile_name, payload->tempfile_openmode);
-		if(payload->localf == NULL) {
-			_alpm_log(handle, ALPM_LOG_ERROR,
-					_("could not open file %s: %s\n"),
-					payload->tempfile_name, strerror(errno));
-			GOTO_ERR(handle, ALPM_ERR_RETRIEVE, cleanup);
-		}
-	}
-
-	_alpm_log(handle, ALPM_LOG_DEBUG,
-			"%s: opened tempfile for download: %s (%s)\n",
-			payload->remote_name,
-			payload->tempfile_name,
-			payload->tempfile_openmode);
-
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, payload->localf);
 	curl_multi_add_handle(curlm, curl);
-
-	if(handle->dlcb) {
-		alpm_download_event_init_t cb_data = {.optional = payload->errors_ok};
-		handle->dlcb(handle->dlcb_ctx, payload->remote_name, ALPM_DOWNLOAD_INIT, &cb_data);
-	}
 
 	return 0;
 
@@ -170,3 +158,5 @@ cleanup:
 	curl_easy_cleanup(curl);
 	return ret;
 }
+
+*/
