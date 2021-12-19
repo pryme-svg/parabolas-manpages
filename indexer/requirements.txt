@@ -1,0 +1,5 @@
+aiohttp
+tqdm
+chardet
+packaging
+xtarfile[zstd]
