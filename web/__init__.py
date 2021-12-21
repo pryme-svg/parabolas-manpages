@@ -2,9 +2,12 @@ import os
 import sqlite3
 import re
 
+from .db import get_db
+
 import json
 
 from flask import Flask, render_template, abort, g, redirect, Response, current_app, request
+
 from indexer.util import mandoc_convert
 
 def _quicksearch(man_section_lang):
@@ -104,13 +107,6 @@ def _get_manpage(name, section=None, lang=None):
 
 # flask
 
-def get_db():
-    db = getattr(g, '_database', None)
-    if db is None:
-        db = g._database = sqlite3.connect(current_app.config['DATABASE'])
-        db.row_factory = sqlite3.Row
-    return db
-
 def create_app(test_config=None):
     # create and configure the app
     app = Flask(__name__)
@@ -119,6 +115,9 @@ def create_app(test_config=None):
         SECRET_KEY='dev',
         DATABASE=os.path.join(os.path.dirname(__file__), '../packages.db'),
     )
+
+    from . import db
+    db.init_app(app)
 
     if test_config is None:
         # load the instance config, if it exists, when not testing
@@ -142,24 +141,28 @@ def create_app(test_config=None):
     """
 
     index_content = """
-    <h1>Parabolas Manpages</h1>
-    <p>This website contains a collection of manual pages from various pieces of software.</p>
-    <ul>
-        <li>Browse:
+    <article class="single-column-content">
+        <section>
+            <h1>Parabolas Manpages</h1>
+            <p>This website contains a collection of manual pages from various pieces of software.</p>
             <ul>
-                <li><a href="by_section.html">by section</a></li>
-                <li><a href="by_alpha.html">alphabetically</a></li>
-                <li>by individual sections: 
-                    <a href="section_0p.html">0p</a>, <a href="section_1.html">1</a>, <a href="section_1p.html">1p</a>, <a href="section_2.html">2</a>, <a href="section_3.html">3</a>, <a href="section_3p.html">3p</a>, <a href="section_4.html">4</a>, <a href="section_5.html">5</a>, <a href="section_6.html">6</a>, <a href="section_7.html">7</a>, <a href="section_8.html">8</a>
+                <li>Browse:
+                    <ul>
+                        <li><a href="by_section.html">by section</a></li>
+                        <li><a href="by_alpha.html">alphabetically</a></li>
+                        <li>by individual sections: 
+                            <a href="section_0p.html">0p</a>, <a href="section_1.html">1</a>, <a href="section_1p.html">1p</a>, <a href="section_2.html">2</a>, <a href="section_3.html">3</a>, <a href="section_3p.html">3p</a>, <a href="section_4.html">4</a>, <a href="section_5.html">5</a>, <a href="section_6.html">6</a>, <a href="section_7.html">7</a>, <a href="section_8.html">8</a>
+                        </li>
+                    </ul>
                 </li>
+                <li>Intro pages
+                    <br>
+                    <a href="/man/intro.1.html">intro(1)</a>, <a href="/man/intro.2.html">intro(2)</a>, <a href="/man/intro.3.html">intro(3)</a>, <a href="/man/intro.4.html">intro(4)</a>, <a href="/man/intro.5.html">intro(5)</a>, <a href="/man/intro.6.html">intro(6)</a>, <a href="/man/intro.7.html">intro(7)</a>, <a href="/man/intro.8.html">intro(8)</a>
+                </li>
+                <li>Individual pages can be accessed using <pre><code>/man/&lt;name&gt;.&lt;section&gt;.html</code></pre></li>
             </ul>
-        </li>
-        <li>Intro pages
-            <br>
-            <a href="/man/intro.1.html">intro(1)</a>, <a href="/man/intro.2.html">intro(2)</a>, <a href="/man/intro.3.html">intro(3)</a>, <a href="/man/intro.4.html">intro(4)</a>, <a href="/man/intro.5.html">intro(5)</a>, <a href="/man/intro.6.html">intro(6)</a>, <a href="/man/intro.7.html">intro(7)</a>, <a href="/man/intro.8.html">intro(8)</a>
-        </li>
-        <li>Individual pages can be accessed using <pre><code>/man/&lt;name&gt;.&lt;section&gt;.html</code></pre></li>
-    </ul>
+        </section>
+    </article>
     """
     @app.route('/')
     def index():
@@ -178,6 +181,18 @@ def create_app(test_config=None):
             return redirect(f"/man/{result['NAME']}.{result['SECTION']}")
 
         return "Not Implemented Yet"
+
+    @app.route('/listing')
+    def listing():
+        db = get_db().cursor()
+        db.execute("""SELECT * FROM arch_manpages
+            ORDER BY
+                NAME ASC;""")
+        result = db.fetchall()
+        #if not result:
+            # not found
+        return render_template("listing.html", manpages=result)
+
 
     @app.route('/man/<path:path>')
     def manpage(path):
@@ -220,12 +235,7 @@ def create_app(test_config=None):
     def page_not_found(error):
         return "not found", 404
 
-    @app.teardown_appcontext
-    def close_connection(exception):
-        db = getattr(g, '_database', None)
-        if db is not None:
-            db.close()
-
-
     return app
 
+if __name__ == "__main__":
+    app.run()

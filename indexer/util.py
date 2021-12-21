@@ -3,6 +3,8 @@ import re
 import textwrap
 import unicodedata
 
+from pathlib import PurePath
+
 import subprocess
 
 import sys
@@ -30,6 +32,29 @@ class CustomFormatter(logging.Formatter):
         log_fmt = self.FORMATS.get(record.levelno)
         formatter = logging.Formatter(log_fmt)
         return formatter.format(record)
+
+# LOGGER
+logger = logging.getLogger("Util")
+logger.setLevel(logging.DEBUG)
+ch = logging.StreamHandler()
+ch.setLevel(logging.DEBUG)
+ch.setFormatter(CustomFormatter())
+logger.addHandler(ch)
+
+
+
+def _get_manpage(db, name, section=None, lang=None):
+    """
+    Fetch manpage row from database
+    """
+    # Big brain?
+    values = tuple(x for x in (name,section,lang,) if x is not None)
+    db.execute(f"""SELECT * FROM arch_manpages
+    WHERE NAME = ? {"AND SECTION = ?" if section else ""} {"AND LOCALE = ?" if lang else ""}""", values)
+    result = db.fetchone()
+    return result # may be None
+
+
 
 class ProgressBar(object):
     def __init__(self, total=100):
@@ -202,7 +227,8 @@ def postprocess(text, fmt):
                                       r"(?P<man_name>[A-Za-z0-9@._+\-:\[\]]+)"
                                       r"\<\/\1\>"
                                       r"\((?P<section>\d[a-z]{,3})\)")
-        text = xref_pattern.sub("<a href='" + ROOT_URL + "man/" + r"\g<man_name>.\g<section>." + lang +
+        #text = xref_pattern.sub("<a href='" + ROOT_URL + "man/" + r"\g<man_name>.\g<section>." + lang +
+        text = xref_pattern.sub("<a href='man/" + r"\g<man_name>.\g<section>." + lang +
                                         "'>\g<man_name>(\g<section>)</a>",
                                 text)
 
@@ -305,6 +331,44 @@ def extract_description(text, lang="en"):
     # (some pages contain a lot of text in the NAME section, e.g. owncloud(1) or qwtlicense(3))
     description = "\n\n".join(description.split("\n\n")[:2])
     return description
+
+def resolve_so_links(db):
+    """
+    commit after running this !
+    """
+    db.execute("""SELECT * FROM arch_manpages""")
+    res = db.fetchall()
+    for manpage in res:
+        if manpage['SO_RESOLVED'] == 1:
+            continue
+        stripped = re.sub(r'^\.\\".*', "", manpage['CONTENT'], flags=re.MULTILINE)
+        stripped = stripped.strip()
+
+        # eliminate the '.so' macro
+        if re.fullmatch(r"^\.so [A-Za-z0-9@._+\-:\[\]\/]+\s*$", stripped):
+            path = stripped.split()[1]
+            pp = PurePath(path)
+            target_name = pp.stem
+            target_section = pp.suffix[1:]  # strip the dot
+
+            target = _get_manpage(db, target_name, target_section)
+
+            if target is None:
+                logger.warning("Unknown target page: {}".format(stripped.split()[1]))
+            else:
+                txt_content = mandoc_convert(target['CONTENT'], "txt")
+                html_content = mandoc_convert(target['CONTENT'], "html")
+                name = target['NAME']
+                section = target['SECTION']
+
+                # keep old content
+                db.execute("""UPDATE arch_manpages
+                SET TXT_CONTENT = ?,
+                HTML_CONTENT = ?,
+                SO_RESOLVED = 1
+                WHERE NAME = ? AND SECTION = ?""", (txt_content, html_content, manpage['NAME'], manpage['SECTION'],))
+                logger.info(f"Resolved .so link {manpage['NAME']}.{manpage['SECTION']} -> {target_name}.{target_section}")
+
 
 
 # end man2html

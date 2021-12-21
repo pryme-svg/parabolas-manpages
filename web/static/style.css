@@ -3,7 +3,17 @@
 	padding: 0;
 	line-height: 1.4;
 }
-
+article.single-column-content {
+	width: 100%;
+}
+main#content {
+	display: flex;
+	margin: 1em;
+	justify-content: center;
+}
+#content {
+	font-size: 0.875em;
+}
 body {
 	color: #222;
 	font-family: sans-serif;
@@ -83,12 +93,18 @@ a:hover {
 	text-decoration: underline;
 }
 
-#content {
-	padding: 12px;
-}
 #content p {
 	padding: 0.5em 0;
 }
 #content ul {
 	padding-left: 2em;
+}
+
+ul.multi-column {
+	column-width: 20em;
+	column-gap: 1.5em;
+	padding-left: 0.5em;
+}
+ul.multi-column li {
+	overflow-wrap: break-word;
 }

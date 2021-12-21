@@ -1,13 +1,6 @@
 /* Layout */
 
-main#mancontent {
-	display: flex;
-	margin: 1em;
-	justify-content: center;
-}
-#mancontent {
-	font-size: 0.875em;
-}
+
 #content-left {
 	display: block;
 	order: 1;

@@ -8,7 +8,6 @@ import json
 import chardet
 
 from packaging import version
-
 from pathlib import PurePath
 
 from typing import Union
@@ -19,11 +18,13 @@ import gzip
 import os
 
 import datetime
+import time
 
 from tqdm import tqdm
 
 import logging
-from util import CustomFormatter, mandoc_convert, extract_headings, extract_description
+from .util import CustomFormatter, mandoc_convert, extract_headings, extract_description, resolve_so_links
+
 
 arch = 'x86_64'
 tmpdir = 'temp/' # trailing slash
@@ -48,6 +49,7 @@ class UnknownManPath(Exception):
 class Indexer(object):
 
     def __init__(self, repo: str, db: str):
+        self.INDEXER_STARTTIME = int(time.time())
         self._repo = repo
         self._con = sqlite3.connect(db) #isolation_level=None for autocommit
         self._con.row_factory = sqlite3.Row
@@ -99,7 +101,8 @@ class Indexer(object):
             DESCRIPTION TEXT,
             CONTENT TEXT,
             HTML_CONTENT TEXT,
-            TXT_CONTENT TEXT
+            TXT_CONTENT TEXT,
+            SO_RESOLVED INTEGER DEFAULT 0
         );
         """)
         self._db.execute("""CREATE TABLE IF NOT EXISTS arch_meta (
@@ -107,6 +110,13 @@ class Indexer(object):
             TIMESTAMP INTEGER,
             HAVEMAN_PKGS INTEGER,
             TOTAL_PKGS INTEGER
+        );
+        """)
+        self._db.execute("""CREATE TABLE IF NOT EXISTS arch_executions (
+            START_TIME INTEGER,
+            EXECUTION_TIME INTEGER,
+            UPDATED_PKGS INTEGER,
+            UPDATED_PAGES INTEGER
         );
         """)
         self._db.execute("""CREATE TABLE IF NOT EXISTS arch_redirects (
@@ -158,6 +168,12 @@ class Indexer(object):
             return None
         else:
             return result['CONTENT']
+
+    def _insert_execution(self):
+        exec_time = self.INDEXER_ENDTIME - self.INDEXER_STARTTIME
+        self._db.execute("""INSERT INTO arch_executions
+        VALUES (?, ?, ?, ?)""", (self.INDEXER_STARTTIME, exec_time, self._updatedpkgs + self._newpkgs, self._updated_pages))
+        self._con.commit()
 
 
     def _insert_manpage(self, package, filename, headings, description, content, html_content, txt_content):
@@ -349,9 +365,9 @@ class Indexer(object):
         logger.info(f"Traversing ./temp/{self._repo}.files")
 
         # Traverse ./temp/{repo}.files
-        newpkgs = 0
+        self._newpkgs = 0
         self._newpkgs_list = []
-        updatedpkgs = 0
+        self._updatedpkgs = 0
         self._updatedpkgs_list = []
         havemanpkgs = 0
         totalpkgs = 0
@@ -378,7 +394,7 @@ class Indexer(object):
                         self._db.execute(f"""INSERT INTO arch_packages (NAME, REPO, VERSION, FILENAME, ARCH, UPSTREAM, LICENSE, URL, MANPATHS)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
                         """, (pkg['name'], pkg['repo'], pkg['version'], pkg['filename'], pkg['arch'], pkg['upstream'], pkg['license'], pkg['url'], json.dumps(pkg['manpaths']),))
-                        newpkgs += 1
+                        self._newpkgs += 1
                         self._newpkgs_list.append(pkg)
                         logger.info(f"New package: {pkg['name']} {pkg['version']}")
                     elif version.parse(pkg['version']) > version.parse(oldver):
@@ -395,14 +411,14 @@ class Indexer(object):
                                 NAME = ?;
                             """, (pkg['version'], pkg['filename'], pkg['arch'], pkg['upstream'], pkg['license'], pkg['url'], json.dumps(pkg['manpaths'],pkg['name'],)))
                             logger.info(f"Package '{pkg['name']}' updated: {oldver} -> {pkg['version']}")
-                            updatedpkgs += 1
+                            self._updatedpkgs += 1
                             self._updatedpkgs_list.append(pkg)
                     havemanpkgs += 1
                 totalpkgs += 1
 
         self._update_meta('HAVEMAN_PKGS', havemanpkgs)
         self._update_meta('TOTAL_PKGS', totalpkgs)
-        logger.info(f"Package database parsed: {newpkgs} new, {updatedpkgs} updated, {havemanpkgs} have man, {totalpkgs} total")
+        logger.info(f"Package database parsed: {self._newpkgs} new, {self._updatedpkgs} updated, {havemanpkgs} have man, {totalpkgs} total")
         self._con.commit()
 
 
@@ -454,6 +470,8 @@ class Indexer(object):
         to_update = self._updatedpkgs_list + self._newpkgs_list
         logger.info(f"Updating man pages from {len(to_update)} packages")
 
+        updated_pages = 0
+
         redirects = []
         #hardlink_list= []
 
@@ -466,6 +484,8 @@ class Indexer(object):
                 description = extract_description(txt_content)
 
                 self._insert_manpage(pkg['name'], file[1], headings, description, file[2], html_content, txt_content)
+
+                updated_pages += 1
             #for hardlink in hardlinks:
 
             #    # extract info from source
@@ -545,6 +565,7 @@ class Indexer(object):
                     continue
 
                 redirects.append((source_name, source_section, source_lang, target_name, target_section, target_lang,))
+                updated_pages += 1
 
         self._insert_redirects(redirects)
 
@@ -557,14 +578,23 @@ class Indexer(object):
         redirect_count = self._db.fetchone()[0]
         self._db.execute('SELECT COUNT(*) from arch_packages')
         pkg_count = self._db.fetchone()[0]
+        self._updated_pages = updated_pages
         logger.info(f"DB contains {manpage_count} manpages and {redirect_count} symlinks from {pkg_count} packages")
+
+    def _postprocess(self):
+        resolve_so_links(self._db)
 
     async def main(self):
         await self._get_file_index()
         await self._update_man_pages()
+        self._postprocess()
+        self.INDEXER_ENDTIME = int(time.time())
+        self._insert_execution()
+        self._con.commit()
 
 async def main():
-    async with Indexer("core", "../packages.db") as indexer:
+    async with Indexer("core", "packages.db") as indexer:
         await indexer.main()
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

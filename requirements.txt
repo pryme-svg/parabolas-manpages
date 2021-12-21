@@ -5,3 +5,4 @@ packaging
 xtarfile[zstd]
 
 flask
+python-dotenv
