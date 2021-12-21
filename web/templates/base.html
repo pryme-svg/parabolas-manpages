@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>{% block title %}{% if title %}{{ title }}{% endif %}{% endblock %} - Parabolas manual pages</title>
+		<link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='style.css') }}">
+		{% block extra_styles %}{% endblock %}
+	</head>
+	<body>
+		<header>
+			<nav class="topnav">
+				<ul>
+					<li><a href="{{ url_for('index') }}">Home</a></li>
+					<li><a href="{{ url_for('about') }}">About</a></li>
+					<form action="/search" class="search" role="search">
+						<input class="searchbox" type="search" placeholder="Search page" name="q" value="" />
+						<input class="button" type="submit" name="go" value="Go" />
+					</form>
+				</ul>
+			</nav>
+		</header>
+		{% block content %}
+		<main id="content">
+			{% if content %}
+				{{ content|safe }}
+			{% endif %}
+		</main>
+		{% endblock %}
+	</body>
+</html>

@@ -1,8 +1,13 @@
 import logging
+import re
+import textwrap
+import unicodedata
 
 import subprocess
 
 import sys
+
+ROOT_URL = "https://man.parabolas.xyz/"
 
 class CustomFormatter(logging.Formatter):
 
@@ -37,10 +42,66 @@ class ProgressBar(object):
 
 ## man2html (https://gitlab.archlinux.org/archlinux/archmanweb/-/blob/master/archmanweb/utils/mandoc.py) ##
 
-def mandoc_convert(content):
-    cmd = f"mandoc -T html -O fragment"
+def mandoc_convert(content, fmt):
+    if fmt == "html":
+        cmd = "mandoc -T html -O fragment"
+    elif fmt == "txt":
+        cmd = "mandoc -T utf8"
     p = subprocess.run(cmd, shell=True, check=True, input=content, encoding="utf-8", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    return p.stdout
+    return postprocess(p.stdout, fmt)
+
+def normalize_html_entities(s):
+    def repl(match):
+        # TODO: add some error checking
+        if match.group(1):
+            return chr(int(match.group(2), 16))
+        return chr(int(match.group(2)))
+    return re.sub(r"&#(x?)([0-9a-fA-F]+);", repl, s)
+
+
+# escape sensitive characters when formatting an element attribute
+# https://stackoverflow.com/a/7382028
+def safe_escape_attribute(attribute):
+    escape_map = {
+        "<"  : "&lt;",
+        ">"  : "&gt;",
+        "\"" : "&quot;",
+        "'"  : "&apos;",
+        "&"  : "&amp;",
+    }
+    return "".join(escape_map.get(c, c) for c in attribute)
+
+# adapted from `anchorencode` in wiki-scripts (the "legacy" format was removed):
+# https://github.com/lahwaacz/wiki-scripts/blob/master/ws/parser_helpers/encodings.py#L119-L152
+def anchorencode_href(str_, *, input_is_already_id=False):
+    """
+    anchorencode_href does some percent-encoding on top of anchorencode_id to
+    increase compatibility (The id can be linked with "#id" as well as with
+    "#percent-encoded-id", since the browser does the percent-encoding in the
+    former case. But if we used percent-encoded ids in the first place, only
+    the links with percent-encoded fragments would work.)
+    """
+    if input_is_already_id is False:
+        str_ = anchorencode_id(str_)
+    # encode "%" from percent-encoded octets
+    str_ = re.sub(r"%([a-fA-F0-9]{2})", r"%25\g<1>", str_)
+    # encode sensitive characters - the output of this function should be usable
+    # in various markup languages (MediaWiki, FluxBB, etc.)
+    encode_chars = "[]|"
+
+    escape_char = "%"
+    charset = "utf-8"
+    errors = "strict"
+    output = ""
+    for char in str_:
+        # encode characters from encode_chars and the Separator and Other categories
+        # https://en.wikipedia.org/wiki/Unicode#General_Category_property
+        if char in encode_chars or unicodedata.category(char)[0] in {"Z", "C"}:
+            for byte in bytes(char, charset, errors):
+                output += "{}{:02X}".format(escape_char, byte)
+        else:
+            output += char
+    return output
 
 # function copied from wiki-scripts:
 # https://github.com/lahwaacz/wiki-scripts/blob/master/ws/parser_helpers/encodings.py#L81-L98
@@ -110,34 +171,63 @@ def _replace_section_heading_ids(html):
                          r"\<\/(?P=heading_tag)\>", re.DOTALL)
     return re.sub(pattern, repl_heading, html)
 
+def _replace_urls_in_plain_text(html):
+    def repl_url(match):
+        url = match.group("url")
+        if not url:
+            return match.group(0)
+        return f"<a href='{url}'>{url}</a>"
 
-def postprocess(text):
-    xref_pattern = re.compile(r"\<(?P<tag>b|i|strong|em|mark)\>"
-                                  r"(?P<man_name>[A-Za-z0-9@._+\-:\[\]]+)"
-                                  r"\<\/\1\>"
-                                  r"\((?P<section>\d[a-z]{,3})\)")
-    text = xref_pattern.sub("<a href='" + reverse("index") + "man/" + r"\g<man_name>.\g<section>." + lang +
-                                    "'>\g<man_name>(\g<section>)</a>",
-                            text)
+    skip_tags_pattern = r"\<(?P<skip_tag>a|pre)[^>]*\>.*?\</(?P=skip_tag)\>"
+    url_pattern = r"(?P<url>https?://[^\s<>&]+(?<=[\w/]))"
+    surrounding_tag_begin = r"(?P<tag_begin>\<(?P<tag>b|i|strong|em|mark)[^>]*\>\s*)?"
+    surrounding_tag_end = r"(?(tag_begin)\s*\</(?P=tag)\>|)"
+    surrounding_angle_begin = r"(?P<angle>&lt;)?"
+    surrounding_angle_end = r"(?(angle)&gt;|)"
+    html = re.sub(f"{skip_tags_pattern}|{surrounding_angle_begin}{surrounding_tag_begin}{url_pattern}{surrounding_tag_end}{surrounding_angle_end}",
+                  repl_url, html, flags=re.DOTALL)
 
-    # remove empty tags
-    text = re.sub(r"\<(?P<tag>[^ >]+)[^>]*\>(\s|&nbsp;)*\</(?P=tag)\>\n?", "", text)
+    # if the URL is the only text in <pre> tags, it gets replaced
+    html = re.sub(f"<pre>\s*{url_pattern}\s*</pre>",
+                  repl_url, html, flags=re.DOTALL)
 
-    # strip leading and trailing newlines and remove common indentation
-    # from the text inside <pre> tags
-    _pre_tag_pattern = re.compile(r"\<pre\>(.+?)\</pre\>", flags=re.DOTALL)
-    text = _pre_tag_pattern.sub(lambda match: "<pre>" + textwrap.dedent(match.group(1).strip("\n")) + "</pre>", text)
+    return html
 
-    # remove <br/> tags following a <pre> or <div> tag
-    text = re.sub(r"(?<=\</(pre|div)\>)\n?<br/>", "", text)
 
-    # replace URLs in plain-text with <a> links
-    #text = _replace_urls_in_plain_text(text)
 
-    # replace IDs for section headings and self-links with something sensible and wiki-compatible
-    text = _replace_section_heading_ids(text)
+def postprocess(text, fmt):
+    if fmt == "html":
+        lang = "en"
+        xref_pattern = re.compile(r"\<(?P<tag>b|i|strong|em|mark)\>"
+                                      r"(?P<man_name>[A-Za-z0-9@._+\-:\[\]]+)"
+                                      r"\<\/\1\>"
+                                      r"\((?P<section>\d[a-z]{,3})\)")
+        text = xref_pattern.sub("<a href='" + ROOT_URL + "man/" + r"\g<man_name>.\g<section>." + lang +
+                                        "'>\g<man_name>(\g<section>)</a>",
+                                text)
 
-    return text
+        # remove empty tags
+        text = re.sub(r"\<(?P<tag>[^ >]+)[^>]*\>(\s|&nbsp;)*\</(?P=tag)\>\n?", "", text)
+
+        # strip leading and trailing newlines and remove common indentation
+        # from the text inside <pre> tags
+        _pre_tag_pattern = re.compile(r"\<pre\>(.+?)\</pre\>", flags=re.DOTALL)
+        text = _pre_tag_pattern.sub(lambda match: "<pre>" + textwrap.dedent(match.group(1).strip("\n")) + "</pre>", text)
+
+        # remove <br/> tags following a <pre> or <div> tag
+        text = re.sub(r"(?<=\</(pre|div)\>)\n?<br/>", "", text)
+
+        # replace URLs in plain-text with <a> links
+        #text = _replace_urls_in_plain_text(text)
+
+        # replace IDs for section headings and self-links with something sensible and wiki-compatible
+        text = _replace_section_heading_ids(text)
+
+        text = _replace_urls_in_plain_text(text)
+
+        return text
+    elif fmt == "txt":
+        return re.sub(".\b", "", text, flags=re.DOTALL)
 
 def extract_headings(html):
     def normalize(title):

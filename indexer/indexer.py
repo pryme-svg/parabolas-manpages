@@ -23,7 +23,7 @@ import datetime
 from tqdm import tqdm
 
 import logging
-from util import CustomFormatter, postprocess, mandoc_convert, extract_headings, extract_description
+from util import CustomFormatter, mandoc_convert, extract_headings, extract_description
 
 arch = 'x86_64'
 tmpdir = 'temp/' # trailing slash
@@ -81,18 +81,25 @@ class Indexer(object):
             REPO TEXT,
             VERSION TEXT,
             FILENAME TEXT,
+            ARCH TEXT,
+            UPSTREAM TEXT,
+            LICENSE TEXT,
             URL TEXT,
             MANPATHS TEXT
         );
         """)
         self._db.execute("""CREATE TABLE IF NOT EXISTS arch_manpages (
             PACKAGE TEXT,
+            REPO TEXT,
             FILENAME TEXT UNIQUE PRIMARY KEY,
             NAME TEXT,
             SECTION TEXT,
             LOCALE TEXT,
+            HEADINGS TEXT,
+            DESCRIPTION TEXT,
             CONTENT TEXT,
-            HTML_CONTENT TEXT
+            HTML_CONTENT TEXT,
+            TXT_CONTENT TEXT
         );
         """)
         self._db.execute("""CREATE TABLE IF NOT EXISTS arch_meta (
@@ -132,13 +139,13 @@ class Indexer(object):
         """
         Fetch content of manpage from database
         """
-        self._db.execute("""SELECT CONTENT FROM arch_manpages
+        self._db.execute("""SELECT * FROM arch_manpages
         WHERE FILENAME = ?;""", (filename,))
         result = self._db.fetchone()
         if result is None:
             return None
         else:
-            return result['CONTENT']
+            return result
 
     def _get_manpage_html(self, filename: str) -> Union[None, str]:
         """
@@ -153,21 +160,22 @@ class Indexer(object):
             return result['CONTENT']
 
 
-    def _insert_manpage(self, package, filename, content, html_content):
+    def _insert_manpage(self, package, filename, headings, description, content, html_content, txt_content):
         """
         Make sure to commit() after running this
         """
-        
-        if content != self._get_manpage(filename):
+
+        prevman = self._get_manpage(filename)
+        if prevman is None or content != self._get_manpage(filename)['CONTENT']:
 
             try:
                 name, section, locale = self._getmanpathinfo(filename)
             except UnknownManPath:
                 logger.warning("Skipping path with unrecognized structure: {}".format(path))
 
-            self._db.execute("""INSERT OR REPLACE INTO arch_manpages (PACKAGE, FILENAME, NAME, SECTION, LOCALE, CONTENT, HTML_CONTENT)
-            VALUES(?, ?, ?, ?, ?, ?, ?);
-            """, (package, filename, name, section, locale, content, html_content,))
+            self._db.execute("""INSERT OR REPLACE INTO arch_manpages (PACKAGE, REPO, FILENAME, NAME, SECTION, LOCALE, HEADINGS, DESCRIPTION, CONTENT, HTML_CONTENT, TXT_CONTENT)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """, (package, self._repo, filename, name, section, locale, headings, description, content, html_content, txt_content,))
             #self._con.commit()
             logger.info(f"Updated {filename} for package {package}")
 
@@ -218,7 +226,7 @@ class Indexer(object):
         #mirror = re.findall(r'#Server = (http?s\:\/\/.*)', mirrorlist)[0].replace('$repo', self._repo).replace('$arch', arch)
         #logger.info(f"Selected Mirror: {mirror}")
         #return mirror
-        return "https://mirrors.edge.kernel.org/archlinux/core/os/x86_64/"
+        return "https://mirrors.edge.kernel.org/archlinux/core/os/x86_64"
 
     def _ismanpath(self, path: str) -> bool:
         if path.startswith(MANDIR) and not path.endswith("/"):
@@ -354,32 +362,38 @@ class Indexer(object):
                 if manpaths and meta != None:
                     pkg = {
                             "name": meta["NAME"],
-                            "version": meta["VERSION"],
                             "repo": self._repo,
+                            "version": meta["VERSION"],
                             "filename": meta['FILENAME'],
-                            "manpaths": manpaths,
-                            "url": f"{self._mirror}/{meta['FILENAME']}"
+                            "arch": meta['ARCH'],
+                            "upstream": meta['URL'],
+                            "license": meta['LICENSE'],
+                            "url": f"{self._mirror}/{meta['FILENAME']}",
+                            "manpaths": manpaths
                     }
                     
                     oldver = self._get_pkg(pkg['name'], 'VERSION')
                     if oldver is None:
                         # new entry
-                        self._db.execute(f"""INSERT INTO arch_packages (NAME, REPO, VERSION, FILENAME, URL, MANPATHS)
-                        VALUES (?, ?, ?, ?, ?, ?);
-                        """, (pkg['name'], pkg['repo'], pkg['version'], pkg['filename'], pkg['url'], json.dumps(pkg['manpaths']),))
+                        self._db.execute(f"""INSERT INTO arch_packages (NAME, REPO, VERSION, FILENAME, ARCH, UPSTREAM, LICENSE, URL, MANPATHS)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+                        """, (pkg['name'], pkg['repo'], pkg['version'], pkg['filename'], pkg['arch'], pkg['upstream'], pkg['license'], pkg['url'], json.dumps(pkg['manpaths']),))
                         newpkgs += 1
                         self._newpkgs_list.append(pkg)
                         logger.info(f"New package: {pkg['name']} {pkg['version']}")
                     elif version.parse(pkg['version']) > version.parse(oldver):
                             # downloaded version is newer, update
                             self._db.execute(f"""UPDATE arch_packages
-                            SET VERSION = '{pkg['version']}',
-                                FILENAME = '{pkg['filename']}',
-                                URL = '{pkg['url']}',
-                                MANPATHS = '{json.dumps(pkg['manpaths'])}'
+                            SET VERSION = ?,
+                                FILENAME = ?,
+                                ARCH = ?,
+                                UPSTREAM = ?,
+                                LICENSE = ?,
+                                URL = ?,
+                                MANPATHS = ?,
                             WHERE
-                                NAME = '{pkg['name']}';
-                            """)
+                                NAME = ?;
+                            """, (pkg['version'], pkg['filename'], pkg['arch'], pkg['upstream'], pkg['license'], pkg['url'], json.dumps(pkg['manpaths'],pkg['name'],)))
                             logger.info(f"Package '{pkg['name']}' updated: {oldver} -> {pkg['version']}")
                             updatedpkgs += 1
                             self._updatedpkgs_list.append(pkg)
@@ -407,19 +421,18 @@ class Indexer(object):
         path = tmpdir + 'pkgs/' + pkg['filename']
         resp = await self._download_file(pkg['url'], path)
         with tarfile.open(path, "r") as t:
-            hardlinks = []
+            #hardlinks = []
             symlinks = []
             files = []
             for file in pkg['manpaths']:
                 info = t.getmember(file)
-                if info.islnk():
-                    if file.endswith(".gz"):
-                        file = file[:-3]
-                    target = info.linkname
-                    if target.endswith(".gz"):
-                        target = target[:-3]
-                    hardlinks.append ( ("hardlink", file, target) )
-                elif info.issym():
+                # just treat hardlinks like normal files because it's too hard
+#                if info.islnk():
+#                    target = info.linkname
+#                    if target.endswith(".gz"):
+#                        target = target[:-3]
+#                    hardlinks.append ( ("hardlink", file, target) )
+                if info.issym():
                     if file.endswith(".gz"):
                         file = file[:-3]
                     target = info.linkname
@@ -433,7 +446,8 @@ class Indexer(object):
                         man = gzip.decompress(man)
                         man = self._decode(man)
                     files.append( ("file", file, man))
-        return (files, symlinks, hardlinks,)
+        #return (files, symlinks, hardlinks,)
+        return (files, symlinks,)
 
     async def _update_man_pages(self):
         # update self._updatedpkgs_list and self._newpkgs_list
@@ -441,41 +455,53 @@ class Indexer(object):
         logger.info(f"Updating man pages from {len(to_update)} packages")
 
         redirects = []
-        hardlink_list= []
+        #hardlink_list= []
 
         for pkg in to_update:
-            files, symlinks, hardlinks = await self._get_man_contents(pkg)
+            files, symlinks = await self._get_man_contents(pkg)
             for file in files:
-                self._insert_manpage(pkg['name'], file[1], file[2], mandoc_convert(file[2]))
-            for hardlink in hardlinks:
+                html_content = mandoc_convert(file[2], "html")
+                txt_content = mandoc_convert(file[2], 'txt')
+                headings = json.dumps(extract_headings(html_content))
+                description = extract_description(txt_content)
 
-                # extract info from source
-                try:
-                    source_name, source_section, source_lang = self._getmanpathinfo(hardlink[1])
-                except UnknownManPath:
-                    logger.warning("Skipping hardlink with unrecognized source path: {}".format(hardlink[1]))
-                    continue
+                self._insert_manpage(pkg['name'], file[1], headings, description, file[2], html_content, txt_content)
+            #for hardlink in hardlinks:
 
-                # extract info from target
-                try:
-                    target_name, target_section, target_lang = self._getmanpathinfo(hardlink[2])
-                except UnknownManPath:
-                    logger.warning("Skipping hardlink with unrecognized target path: {}".format(hardlink[2]))
-                    continue
-                
-                # drop encoding from the lang (ru.KOI8-R)
-                if "." in source_lang:
-                    source_lang, _ = source_lang.split(".", maxsplit=1)
-                if "." in target_lang:
-                    target_lang, _ = target_lang.split(".", maxsplit=1)
+            #    # extract info from source
+            #    try:
+            #        source_name, source_section, source_lang = self._getmanpathinfo(hardlink[1])
+            #    except UnknownManPath:
+            #        logger.warning("Skipping hardlink with unrecognized source path: {}".format(hardlink[1]))
+            #        continue
 
-                if target_lang == source_lang and target_section == source_section and target_name == source_name:
-                    logger.warning("Skipping hardlink from {} to {} (the base name is the same).".format(source, target))
-                    continue
+            #    # extract info from target
+            #    try:
+            #        target_name, target_section, target_lang = self._getmanpathinfo(hardlink[2])
+            #    except UnknownManPath:
+            #        logger.warning("Skipping hardlink with unrecognized target path: {}".format(hardlink[2]))
+            #        continue
+            #    
+            #    # drop encoding from the lang (ru.KOI8-R)
+            #    if "." in source_lang:
+            #        source_lang, _ = source_lang.split(".", maxsplit=1)
+            #    if "." in target_lang:
+            #        target_lang, _ = target_lang.split(".", maxsplit=1)
 
-                hardlink_list.append((source_name, source_section, source_lang, target_name, target_section, target_lang,))
-                content = self._get_manpage(hardlink[2])
-                self._insert_manpage(pkg['name'], hardlink[1], content, mandoc_convert(content))
+            #    if target_lang == source_lang and target_section == source_section and target_name == source_name:
+            #        logger.warning("Skipping hardlink from {} to {} (the base name is the same).".format(source, target))
+            #        continue
+
+            #    hardlink_list.append((source_name, source_section, source_lang, target_name, target_section, target_lang,))
+
+            #    manpage = self._get_manpage(hardlink[2])
+            #    content = manpage['CONTENT']
+            #    html_content = manpage['HTML_CONTENT']
+            #    txt_content = manpage['TXT_CONTENT']
+            #    headings = json.dumps(extract_headings(html_content))
+            #    description = extract_description(txt_content)
+
+            #    self._insert_manpage(pkg['name'], hardlink[1], headings, description, content, html_content, txt_content)
 
             for symlink in symlinks:
                 source, target = symlink[1], symlink[2]
@@ -538,7 +564,7 @@ class Indexer(object):
         await self._update_man_pages()
 
 async def main():
-    async with Indexer("core", "packages.db") as indexer:
+    async with Indexer("core", "../packages.db") as indexer:
         await indexer.main()
 
 asyncio.run(main())

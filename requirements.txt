@@ -3,3 +3,5 @@ tqdm
 chardet
 packaging
 xtarfile[zstd]
+
+flask

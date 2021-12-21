@@ -1,0 +1,94 @@
+* {
+	margin: 0;
+	padding: 0;
+	line-height: 1.4;
+}
+
+body {
+	color: #222;
+	font-family: sans-serif;
+}
+
+/* Navbar */
+.topnav {
+	background-color: #333;
+	padding: 10px 15px;
+	min-height: 40px;
+}
+.topnav ul {
+	display: flex;
+	flex-wrap: wrap;
+}
+.topnav ul li {
+	display: inline-block;
+	padding-left: 15px;
+	padding-right: 15px;
+	padding-top: 10px;
+}
+.topnav li a {
+	color: #999;
+	font-weight: bold;
+	text-decoration: none;
+}
+.topnav li a:hover {
+	color: #fff;
+	text-decoration: underline;
+}
+.topnav form {
+	display: flex;
+	padding-top: 8px;
+	outline: 0;
+	border-radius: 4px;
+}
+@media screen and (min-width: 480px) {
+	.topnav form {
+		margin-left: auto;
+	}
+}
+.topnav form .searchbox {
+	outline: 0;
+	border: 0;
+	padding: 4px 5px;
+	border-radius: 2px 0 0 2px;
+}
+.topnav form .button {
+	outline: 0;
+	border: 0;
+	padding: 4px;
+	border-radius: 0 2px 2px 0;
+}
+nav.toc ul {
+	padding-left: 2em;
+}
+
+pre {
+    font: 1.2em monospace;
+    border: 1px solid #bdb;
+    background: #dfd;
+    padding: 0.5em;
+    margin: 1em;
+    overflow: auto;
+    white-space: pre-wrap;
+}
+a {
+	text-decoration: none;
+}
+a:link {
+	color: #07b;
+}
+a:visited {
+	color: #666;
+}
+a:hover {
+	text-decoration: underline;
+}
+
+#content {
+	padding: 12px;
+}
+#content p {
+	padding: 0.5em 0;
+}
+#content ul {
+	padding-left: 2em;
+}
