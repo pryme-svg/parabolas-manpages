@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<article class="single-column-content">
+	<section>
+		<h1>Parabolas Manpages</h1>
+		<p>This website contains {{ totals[0] }} manual pages and {{ totals[1] }} symbolic links from {{ totals[2] }} packages</p>
+		<ul>
+			<li>Browse at the <a href="/listing">listing page</a></li>
+			<li>Read the intro pages
+				<br>
+				<a href="/man/intro.1.html">intro(1)</a>, <a href="/man/intro.2.html">intro(2)</a>, <a href="/man/intro.3.html">intro(3)</a>, <a href="/man/intro.4.html">intro(4)</a>, <a href="/man/intro.5.html">intro(5)</a>, <a href="/man/intro.6.html">intro(6)</a>, <a href="/man/intro.7.html">intro(7)</a>, <a href="/man/intro.8.html">intro(8)</a>
+			</li>
+			<li>Individual pages can be accessed using this format:<br />
+				<code>/man/&lt;name&gt;.&lt;section&gt.&lt;language&gt;.&lt;format&gt;.html</code><br />
+				Any part other than <code>&lt;name&gt;</code> is optional
+			</li>
+		</ul>
+		<h2>Latest Updates</h2>
+		<p>Updates to the database, which is <a href="https://parabolas.xyz/files/man_db_dumps/" target="_blank">dumped periodically</a></p>
+		<table class="cool-table">
+			<tr>
+				<th>Time</th>
+				<th>Duration</th>
+				<th>Updated packages</th>
+				<th>Updated man pages</th>
+			</tr>
+			{% for update in updates %}
+			<tr>
+				<td>{{ update['START_TIME']|unix_to_str }}</td>
+				<td>{{ update['EXECUTION_TIME']|seconds_to_str }}</td>
+				<td>{{ update['UPDATED_PKGS'] }}</td>
+				<td>{{ update['UPDATED_PAGES'] }}</td>
+			</tr>
+			{% endfor %}
+		</table>
+	</section>
+</article>
+{% endblock %}

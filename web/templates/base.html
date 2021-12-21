@@ -20,12 +20,12 @@
 				</ul>
 			</nav>
 		</header>
-		{% block content %}
 		<main id="content">
-			{% if content %}
-				{{ content|safe }}
-			{% endif %}
+			{% block content %}
+				{% if content %}
+					{{ content|safe }}
+				{% endif %}
+			{% endblock %}
 		</main>
-		{% endblock %}
 	</body>
 </html>

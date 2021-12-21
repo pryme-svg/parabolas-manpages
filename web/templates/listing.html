@@ -1,16 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Listing{% endblock %}
 {% block content %}
-<main id="content">
-	<article class="single-column-content">
-		<section>
-			<ul class="multi-column">
-			{% for page in manpages %}
-			<li>[{{ page['LOCALE'] }}] <a href="/man/{{ page['NAME'] }}.{{ page['SECTION'] }}">{{ page['NAME'] }}({{ page['SECTION'] }})</a></li>
-			{% endfor %}
-			</ul>
-		</section>
-	</article>
-</main>
+<article class="single-column-content">
+	<section>
+		<ul class="multi-column">
+		{% for page in manpages %}
+		<li>[{{ page['LOCALE'] }}] <a href="/man/{{ page['NAME'] }}.{{ page['SECTION'] }}">{{ page['NAME'] }}({{ page['SECTION'] }})</a></li>
+		{% endfor %}
+		</ul>
+	</section>
+</article>
 {% endblock %}
 

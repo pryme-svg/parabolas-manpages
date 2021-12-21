@@ -3,38 +3,36 @@
 {% block extra_styles %}<link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='man.css') }}">{% endblock %}
 
 {% block content %}
-<main id="content">
-	<article id="content-left">
-		<section class="man-page-content">
-		{{ manpage['HTML_CONTENT']|safe }}
-		</section>
-	</article>
-	<aside id="sidebar">
-		<section class="package-info">
-			<p>Package information:</p>
-			<dl>
-				<dt>Package name:</dt>
-				<dd><a href="https://www.archlinux.org/packages/{{ package['REPO'] }}/{{ package['ARCH'] }}/{{ package['NAME'] }}/">{{ package['REPO'] }}/{{ package['NAME'] }}</a></dd>
-				<dt>Version:</dt>
-				<dd>{{ package['VERSION'] }}</dd>
-				<dt>Upstream:</dt>
-				<dd><a href="{{ package['UPSTREAM'] }}">{{ package['UPSTREAM'] }}</a></dd>
-				<dt>Licenses:</dt>
-				<dd>{{ package['LICENSE'] }}</dd>
-				<dt>Manuals:</dt>
-				<dd><a href="/listing/{{ package['REPO'] }}/{{ package['NAME'] }}/">/listing/{{ package['REPO'] }}/{{ package['NAME'] }}/</a></dd>
-			</dl>
-		</section>
-		<details>
-			<summary>Table of Contents</summary>
-			<nav class="toc">
-				<ul>
-				{% for heading in manpage['HEADINGS'] %}
-					<li><a href="#{{ heading['id'] }}">{{ heading['title'] }}</a></li>
-				{% endfor %}
-				</ul>
-			</nav>
-		</details>
-	</aside>
-</main>
+<article id="content-left">
+	<section class="man-page-content">
+	{{ manpage['HTML_CONTENT']|safe }}
+	</section>
+</article>
+<aside id="sidebar">
+	<section class="package-info">
+		<p>Package information:</p>
+		<dl>
+			<dt>Package name:</dt>
+			<dd><a href="https://www.archlinux.org/packages/{{ package['REPO'] }}/{{ package['ARCH'] }}/{{ package['NAME'] }}/">{{ package['REPO'] }}/{{ package['NAME'] }}</a></dd>
+			<dt>Version:</dt>
+			<dd>{{ package['VERSION'] }}</dd>
+			<dt>Upstream:</dt>
+			<dd><a href="{{ package['UPSTREAM'] }}">{{ package['UPSTREAM'] }}</a></dd>
+			<dt>Licenses:</dt>
+			<dd>{{ package['LICENSE'] }}</dd>
+			<dt>Manuals:</dt>
+			<dd><a href="/listing/{{ package['REPO'] }}/{{ package['NAME'] }}/">/listing/{{ package['REPO'] }}/{{ package['NAME'] }}/</a></dd>
+		</dl>
+	</section>
+	<details>
+		<summary>Table of Contents</summary>
+		<nav class="toc">
+			<ul>
+			{% for heading in manpage['HEADINGS'] %}
+				<li><a href="#{{ heading['id'] }}">{{ heading['title'] }}</a></li>
+			{% endfor %}
+			</ul>
+		</nav>
+	</details>
+</aside>
 {% endblock %}

@@ -10,6 +10,23 @@ from flask import Flask, render_template, abort, g, redirect, Response, current_
 
 from indexer.util import mandoc_convert
 
+from datetime import datetime, timedelta
+
+from string import Template
+
+class DeltaTemplate(Template):
+    delimiter = "%"
+
+def strfdelta(tdelta, fmt):
+    d = {"D": tdelta.days}
+    hours, rem = divmod(tdelta.seconds, 3600)
+    minutes, seconds = divmod(rem, 60)
+    d["H"] = '{:02d}'.format(hours)
+    d["M"] = '{:02d}'.format(minutes)
+    d["S"] = '{:02d}'.format(seconds)
+    t = DeltaTemplate(fmt)
+    return t.substitute(**d)
+
 def _quicksearch(man_section_lang):
     name, section, lang = _parse_man_name_section_lang(man_section_lang)
     return _get_manpage(name, section, lang)
@@ -105,6 +122,26 @@ def _get_manpage(name, section=None, lang=None):
     result = db.fetchone()
     return result # may be None
 
+def _count_rows(table):
+    db = get_db().cursor()
+    db.execute(f"""SELECT COUNT(*) from {table}""")
+    return db.fetchone()[0]
+
+def _get_totals():
+    db = get_db().cursor()
+    packages = _count_rows("arch_packages")
+    pages = _count_rows("arch_manpages")
+    symlinks = _count_rows("arch_redirects")
+    return pages, symlinks, packages
+
+def _get_updates():
+    db = get_db().cursor()
+    db.execute("""SELECT *
+    FROM arch_executions
+    ORDER BY START_TIME DESC
+    LIMIT 5""")
+    return db.fetchall()
+
 # flask
 
 def create_app(test_config=None):
@@ -126,12 +163,6 @@ def create_app(test_config=None):
         # load the test config if passed in
         app.config.from_mapping(test_config)
 
-    # ensure the instance folder exists
-    #try:
-    #    os.makedirs(app.instance_path)
-    #except OSError:
-    #    pass
-
     """
     @app.before_request
     def clear_trailing():
@@ -140,33 +171,18 @@ def create_app(test_config=None):
             return redirect(rp[:-1])
     """
 
-    index_content = """
-    <article class="single-column-content">
-        <section>
-            <h1>Parabolas Manpages</h1>
-            <p>This website contains a collection of manual pages from various pieces of software.</p>
-            <ul>
-                <li>Browse:
-                    <ul>
-                        <li><a href="by_section.html">by section</a></li>
-                        <li><a href="by_alpha.html">alphabetically</a></li>
-                        <li>by individual sections: 
-                            <a href="section_0p.html">0p</a>, <a href="section_1.html">1</a>, <a href="section_1p.html">1p</a>, <a href="section_2.html">2</a>, <a href="section_3.html">3</a>, <a href="section_3p.html">3p</a>, <a href="section_4.html">4</a>, <a href="section_5.html">5</a>, <a href="section_6.html">6</a>, <a href="section_7.html">7</a>, <a href="section_8.html">8</a>
-                        </li>
-                    </ul>
-                </li>
-                <li>Intro pages
-                    <br>
-                    <a href="/man/intro.1.html">intro(1)</a>, <a href="/man/intro.2.html">intro(2)</a>, <a href="/man/intro.3.html">intro(3)</a>, <a href="/man/intro.4.html">intro(4)</a>, <a href="/man/intro.5.html">intro(5)</a>, <a href="/man/intro.6.html">intro(6)</a>, <a href="/man/intro.7.html">intro(7)</a>, <a href="/man/intro.8.html">intro(8)</a>
-                </li>
-                <li>Individual pages can be accessed using <pre><code>/man/&lt;name&gt;.&lt;section&gt;.html</code></pre></li>
-            </ul>
-        </section>
-    </article>
-    """
+    @app.template_filter()
+    def unix_to_str(unix):
+        return datetime.utcfromtimestamp(unix).strftime('%Y-%m-%d %H:%M:%S')
+
+    @app.template_filter()
+    def seconds_to_str(duration):
+        return strfdelta(timedelta(seconds=duration), "%H:%M:%S")
+
     @app.route('/')
     def index():
-        return render_template("base.html", title="Home", content=index_content)
+        totals = _get_totals()
+        return render_template("index.html", title="Home", totals = _get_totals(), updates=_get_updates())
 
     @app.route('/about')
     def about():
