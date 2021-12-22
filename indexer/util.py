@@ -228,7 +228,7 @@ def postprocess(text, fmt):
                                       r"\<\/\1\>"
                                       r"\((?P<section>\d[a-z]{,3})\)")
         #text = xref_pattern.sub("<a href='" + ROOT_URL + "man/" + r"\g<man_name>.\g<section>." + lang +
-        text = xref_pattern.sub("<a href='man/" + r"\g<man_name>.\g<section>." + lang +
+        text = xref_pattern.sub("<a href='/man/" + r"\g<man_name>.\g<section>." + lang +
                                         "'>\g<man_name>(\g<section>)</a>",
                                 text)
 
