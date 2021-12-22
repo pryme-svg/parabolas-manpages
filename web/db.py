@@ -21,7 +21,6 @@ def close_db(e=None):
         db.close()
 
 @click.command('run-indexer')
-@with_appcontext
 def run_indexer_command():
     asyncio.run(main())
     click.echo("Ran the indexer.")

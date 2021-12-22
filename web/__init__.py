@@ -159,7 +159,7 @@ def create_app(test_config=None):
     if not os.path.exists(app.config['DATABASE']):
         from .db import run_indexer_command
         # run indexer
-        run_indexer_command()
+        run_indexer_command([])
 
     #if test_config is None:
     #    # load the instance config, if it exists, when not testing
