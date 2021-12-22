@@ -211,9 +211,9 @@ def create_app(test_config=None):
     @app.route('/listing')
     def listing():
         db = get_db().cursor()
-        db.execute("""SELECT * FROM arch_manpages
+        db.execute("""SELECT NAME, SECTION, LOCALE FROM arch_manpages
             ORDER BY
-                NAME ASC;""")
+            NAME ASC;""")
         result = db.fetchall()
         #if not result:
             # not found
