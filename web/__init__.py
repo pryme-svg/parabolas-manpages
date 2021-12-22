@@ -10,6 +10,8 @@ from flask import Flask, render_template, abort, g, redirect, Response, current_
 
 from indexer.util import mandoc_convert
 
+from threading import Thread
+
 from datetime import datetime, timedelta
 
 from string import Template
@@ -158,8 +160,11 @@ def create_app(test_config=None):
 
     if not os.path.exists(app.config['DATABASE']):
         from .db import run_indexer_command
-        # run indexer
-        run_indexer_command([])
+        # run indexer in bg
+        thread = Thread(target=run_indexer_command, args=([],))
+        thread.daemon = True
+        thread.start()
+        #run_indexer_command([])
 
     #if test_config is None:
     #    # load the instance config, if it exists, when not testing
