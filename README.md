@@ -24,3 +24,9 @@ flask run-indexer
 ```
 flask run
 ```
+
+or
+
+```
+gunicorn web:create_app()
+```

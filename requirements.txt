@@ -6,3 +6,4 @@ xtarfile[zstd]
 
 flask
 python-dotenv
+gunicorn
