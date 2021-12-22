@@ -156,12 +156,17 @@ def create_app(test_config=None):
     from . import db
     db.init_app(app)
 
-    if test_config is None:
-        # load the instance config, if it exists, when not testing
-        app.config.from_pyfile('config.py', silent=True)
-    else:
-        # load the test config if passed in
-        app.config.from_mapping(test_config)
+    if not os.path.exists(app.config['DATABASE']):
+        from .db import run_indexer_command
+        # run indexer
+        run_indexer_command()
+
+    #if test_config is None:
+    #    # load the instance config, if it exists, when not testing
+    #    app.config.from_pyfile('config.py', silent=True)
+    #else:
+    #    # load the test config if passed in
+    #    app.config.from_mapping(test_config)
 
     """
     @app.before_request
